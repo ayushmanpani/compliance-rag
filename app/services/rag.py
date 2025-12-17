@@ -92,12 +92,32 @@ Answer (concise, factual):
 
 
 
-    def ask(self, question: str):
-        # Retrieve docs separately for sources
-        docs = self.retriever.invoke(question)
+    def ask(self, question: str, doc_id: str = None):
+    # 1️⃣ Choose retriever behavior
+        if doc_id:
+            retriever = self.vstore.as_retriever(
+                search_kwargs={"k": 5, "filter": {"doc_id": doc_id}}
+            )
+        else:
+            retriever = self.vstore.as_retriever(
+                search_kwargs={"k": 5}
+            )
 
-        answer = self.chain.invoke(question)
+        # 2️⃣ Retrieve ONCE
+        docs = retriever.invoke(question)
 
+        # 3️⃣ Combine retrieved docs into context
+        context = "\n\n".join([doc.page_content for doc in docs])
+
+        # 4️⃣ Call LLM explicitly with the SAME context
+        answer = self.llm.invoke(
+            self.prompt.format(
+                context=context,
+                question=question
+            )
+        )
+
+        # 5️⃣ Build sources from the SAME docs
         sources = [
             {
                 "doc_id": doc.metadata.get("doc_id"),
@@ -112,6 +132,7 @@ Answer (concise, factual):
             "answer": answer,
             "sources": sources
         }
+
     
     def add_documents(self, documents):
         """
