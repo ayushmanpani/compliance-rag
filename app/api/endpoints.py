@@ -7,6 +7,7 @@ import shutil
 import uuid
 import json
 from datetime import datetime
+from typing import Optional
 
 from app.services.rag import RAGStore
 from app.utils.ingest import ingest_uploaded_pdf
@@ -32,6 +33,7 @@ rag.load_store_if_exists()
 
 class QueryRequest(BaseModel):
     question: str
+    doc_id: Optional[str] = None
 
 # -----------------------
 # Helper functions
