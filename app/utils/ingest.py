@@ -6,29 +6,48 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from app.services.rag import RAGStore
 import uuid
 import os
+import re
 
 
-def extract_text_from_pdf(pdf_path: str) -> str:
-    text = ""
+def is_index_like(text: str) -> bool:
+    # High ratio of numbers / codes = index or table
+    digits = sum(c.isdigit() for c in text)
+    ratio = digits / max(len(text), 1)
 
-    try:
-        with pdfplumber.open(pdf_path) as pdf:
-            for page in pdf.pages:
-                page_text = page.extract_text()
-                if page_text:
-                    text += page_text + "\n"
-    except:
-        pass
+    # Detect circular-style codes
+    if re.search(r"DNBS|No\s+\d+/\d+", text):
+        return True
 
-    if len(text.strip()) < 20:
-        pages = convert_from_path(pdf_path, dpi=200)
-        for img in pages:
-            text += pytesseract.image_to_string(img) + "\n"
+    return ratio > 0.25  # 25% numbers = likely index
 
-    return text
+def extract_text_from_pdf(pdf_path: str):
+    """
+    Returns a list of (page_number, page_text) tuples.
+    """
+    pages_content = []
+
+    with pdfplumber.open(pdf_path) as pdf:
+        for page_num, page in enumerate(pdf.pages, start=1):
+            text = page.extract_text()
+            if text and not is_index_like(text):
+                pages_content.append((page_num, text))
+
+    # OCR fallback ONLY if nothing useful extracted
+    if not pages_content:
+        images = convert_from_path(pdf_path, dpi=200)
+        for page_num, img in enumerate(images, start=1):
+            text = pytesseract.image_to_string(img)
+            if text and not is_index_like(text):
+                pages_content.append((page_num, text))
+
+    return pages_content
 
 
-def create_chunks(text: str, base_metadata: dict, chunk_size=800, chunk_overlap=100):
+def create_chunks(text: str,
+    base_metadata: dict,
+    page_num: int,
+    chunk_size=400,
+    chunk_overlap=60):
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap
@@ -38,32 +57,51 @@ def create_chunks(text: str, base_metadata: dict, chunk_size=800, chunk_overlap=
 
     documents = []
     for i, chunk in enumerate(chunks):
+        
+        if is_index_like(chunk):
+            continue  # 🚫 skip index-like content
+
         documents.append(
             Document(
-                page_content=chunk,
+                page_content=f"passage: {chunk}",
                 metadata={
                     **base_metadata,
-                    "chunk_id": i
+                    "chunk_id": i,
+                    "page": page_num
                 }
             )
         )
+        
+    print("\n[DEBUG] Retrieved chunks:")
+    for i, doc in enumerate(documents):
+        print(f"\n--- Chunk {i} ---")
+        print(doc.page_content[:300])
+    
 
     return documents
 
 
-def ingest_uploaded_pdf(file_path: str, original_filename: str):
-    doc_id = str(uuid.uuid4())
+def ingest_uploaded_pdf(file_path: str,
+    original_filename: str,
+    doc_id: str):
 
     base_metadata = {
         "doc_id": doc_id,
         "original_filename": original_filename
     }
 
-    print("[INFO] Extracting text...")
-    text = extract_text_from_pdf(file_path)
+    print("[INFO] Extracting text and Creating Chunks...")
+    pages = extract_text_from_pdf(file_path)
 
-    print("[INFO] Creating chunks...")
-    documents = create_chunks(text, base_metadata)
+    documents = []
+    for page_num, page_text in pages:
+        page_documents = create_chunks(
+            text=page_text,
+            base_metadata=base_metadata,
+            page_num=page_num
+        )
+        documents.extend(page_documents)
+
 
     print(f"[INFO] Total chunks: {len(documents)}")
 

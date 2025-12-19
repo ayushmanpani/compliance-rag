@@ -1,6 +1,6 @@
 # app/api/endpoints.py
 
-from fastapi import APIRouter, UploadFile, File
+from fastapi import APIRouter, UploadFile, File, HTTPException
 from pydantic import BaseModel
 import os
 import shutil
@@ -12,51 +12,62 @@ from typing import Optional
 from app.services.rag import RAGStore
 from app.utils.ingest import ingest_uploaded_pdf
 
-# -----------------------
+# =======================
+# Absolute paths (CRITICAL)
+# =======================
+
+BASE_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..")
+)
+
+DATA_DIR = os.path.join(BASE_DIR, "data")
+DOCS_DIR = os.path.join(DATA_DIR, "docs")
+METADATA_PATH = os.path.join(DOCS_DIR, "metadata.json")
+
+os.makedirs(DOCS_DIR, exist_ok=True)
+
+# =======================
 # Router & global objects
-# -----------------------
+# =======================
 
 router = APIRouter()
 
-UPLOAD_DIR = "data/docs"
-METADATA_FILE = "data/docs/metadata.json"
-
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-
-# Load RAG store once at startup
-rag = RAGStore()
+rag = RAGStore()          # uses absolute FAISS path internally
 rag.load_store_if_exists()
 
-# -----------------------
+# =======================
 # Request models
-# -----------------------
+# =======================
 
 class QueryRequest(BaseModel):
     question: str
     doc_id: Optional[str] = None
 
-# -----------------------
+# =======================
 # Helper functions
-# -----------------------
+# =======================
+
+def load_metadata():
+    if not os.path.exists(METADATA_PATH) or os.path.getsize(METADATA_PATH) == 0:
+        return []
+
+    try:
+        with open(METADATA_PATH, "r") as f:
+            return json.load(f)
+    except json.JSONDecodeError:
+        return []
+
 
 def save_metadata(entry: dict):
-    """
-    Append document metadata to metadata.json
-    """
-    if os.path.exists(METADATA_FILE):
-        with open(METADATA_FILE, "r") as f:
-            data = json.load(f)
-    else:
-        data = []
-
+    data = load_metadata()
     data.append(entry)
 
-    with open(METADATA_FILE, "w") as f:
+    with open(METADATA_PATH, "w") as f:
         json.dump(data, f, indent=2)
 
-# -----------------------
+# =======================
 # API Endpoints
-# -----------------------
+# =======================
 
 @router.get("/health")
 async def health():
@@ -65,47 +76,69 @@ async def health():
 
 @router.post("/ask")
 async def ask_question(request: QueryRequest):
-    """
-    Ask a question to the RAG system
-    """
     if rag.chain is None:
         return {
             "error": "No documents uploaded yet. Please upload a PDF first."
         }
-    response = rag.ask(request.question)
-    return response
+
+    return rag.ask(
+        question=request.question,
+        doc_id=request.doc_id
+    )
 
 
 @router.post("/upload")
-async def upload_pdf(file: UploadFile = File(...)):
-    """
-    Upload a compliance PDF, ingest it, and update FAISS
-    """
-    if not file.filename.lower().endswith(".pdf"):
-        return {"error": "Only PDF files are allowed"}
+async def upload_pdf(up_file: UploadFile = File(...)):
+ 
 
-    # Generate unique document ID
+    if not up_file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+
+    # Generate UUID for document
     doc_id = str(uuid.uuid4())
     stored_filename = f"{doc_id}.pdf"
-    file_path = os.path.join(UPLOAD_DIR, stored_filename)
+    file_path = os.path.join(DOCS_DIR, stored_filename)
 
-    # Save file to disk
+    # Save PDF to disk
     with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+        shutil.copyfileobj(up_file.file, buffer)
+        
+    await up_file.close()
 
-    # Save metadata
+    # Save metadata FIRST
     save_metadata({
         "doc_id": doc_id,
-        "original_name": file.filename,
-        "stored_name": stored_filename,
+        "original_filename": up_file.filename,
+        "stored_filename": stored_filename,
         "uploaded_at": datetime.utcnow().isoformat()
     })
 
-    # Ingest PDF into vector store
-    ingest_uploaded_pdf(file_path, file.filename)
+    # Ingest PDF into FAISS
+    try:
+        ingest_uploaded_pdf(file_path=file_path,
+                            original_filename=up_file.filename,
+                            doc_id=doc_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    # IMPORTANT: reload FAISS into running process
+    rag.load_store_if_exists()
 
     return {
         "status": "success",
         "doc_id": doc_id,
-        "filename": file.filename
+        "filename": up_file.filename
     }
+
+
+@router.get("/documents")
+async def list_documents():
+    metadata = load_metadata()
+
+    return [
+        {
+            "doc_id": entry["doc_id"],
+            "original_filename": entry["original_filename"]
+        }
+        for entry in metadata
+    ]

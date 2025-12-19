@@ -9,6 +9,11 @@ from langchain_core.output_parsers import StrOutputParser
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
 import os
 
+BASE_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..")
+)
+
+DEFAULT_FAISS_PATH = os.path.join(BASE_DIR, "data", "faiss_index")
 
 def format_docs(docs):
     """Convert list of Documents into a single context string"""
@@ -16,12 +21,13 @@ def format_docs(docs):
 
 
 class RAGStore:
-    def __init__(self, db_path="data/faiss_index"):
+    def __init__(self, db_path: str = DEFAULT_FAISS_PATH):
         self.db_path = db_path
 
         # Embeddings
         self.embedding = HuggingFaceEmbeddings(
-            model_name="intfloat/e5-small-v2"
+            model_name="intfloat/e5-small-v2",
+            encode_kwargs={"normalize_embeddings": True}
         )
 
         # Local LLM (FLAN-T5)
@@ -33,8 +39,9 @@ class RAGStore:
             "text2text-generation",
             model=model,
             tokenizer=tokenizer,
-            max_new_tokens=256,
-            temperature=0
+            max_new_tokens=128,
+            temperature=0,
+            truncation=True 
         )
 
         self.llm = HuggingFacePipeline(pipeline=hf_pipeline)
@@ -42,23 +49,14 @@ class RAGStore:
         # Prompt
         self.prompt = PromptTemplate(
             input_variables=["context", "question"],
-            template="""
-You are a financial compliance assistant.
-
-Rules:
-- Answer ONLY using the provided context.
-- If multiple documents contain relevant information, prioritize the most specific and recent one.
-- If the answer is not present, say exactly:
-  "The provided documents do not contain this information."
-
-Context:
-{context}
-
-Question:
-{question}
-
-Answer (concise, factual):
-"""
+            template=(
+                "Answer the question using ONLY the context below.\n"
+                "If the answer is not in the context, say:\n"
+                "\"Not found in the provided documents.\"\n\n"
+                "Context:\n{context}\n\n"
+                "Question:\n{question}\n\n"
+                "Answer:"
+            )
         )
 
     def load_store_if_exists(self):
@@ -94,21 +92,45 @@ Answer (concise, factual):
 
 
     def ask(self, question: str, doc_id: str = None):
+        print("\n[DEBUG] Requested doc_id:", repr(doc_id))
+
+        # inspect one stored document's metadata
+        if self.vstore:
+            sample = self.vstore.docstore._dict
+            first_doc = next(iter(sample.values()))
+            print("[DEBUG] Sample stored metadata:", first_doc.metadata)
+
+    
     # 1️⃣ Choose retriever behavior
         if doc_id:
             retriever = self.vstore.as_retriever(
-                search_kwargs={"k": 5, "filter": {"doc_id": doc_id}}
+                search_kwargs={"k": 3, "filter": {"doc_id": doc_id}}
             )
         else:
             retriever = self.vstore.as_retriever(
-                search_kwargs={"k": 5}
+                search_kwargs={"k": 3}
             )
 
         # 2️⃣ Retrieve ONCE
-        docs = retriever.invoke(question)
+        expanded_query = (
+            f"query: {question}. "
+            "Answer from sections related to KYC, Customer Due Diligence, "
+            "Ongoing Due Diligence, or updation of records."
+        )
+        docs = retriever.invoke(expanded_query)
+        if not docs:
+            fallback_query = (
+                "query: updation of KYC records ongoing due diligence risk category"
+            )
+            docs = retriever.invoke(fallback_query)
+
 
         # 3️⃣ Combine retrieved docs into context
+        MAX_CONTEXT_CHARS = 1200  # safe for FLAN-T5-small
+
         context = "\n\n".join([doc.page_content for doc in docs])
+        context = context[:MAX_CONTEXT_CHARS]
+
 
         # 4️⃣ Call LLM explicitly with the SAME context
         answer = self.llm.invoke(
