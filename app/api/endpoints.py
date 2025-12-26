@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Optional
 
 from app.services.rag import RAGStore
-from app.utils.ingest import ingest_uploaded_pdf, rebuild_faiss_from_metadata
+from app.utils.ingest import ingest_uploaded_pdf, rebuild_faiss_from_metadata, cleanup_expired_documents
 
 # =======================
 # Absolute paths (CRITICAL)
@@ -219,3 +219,7 @@ async def reset_knowledge_base():
         "message": "Knowledge base cleared successfully"
     }
 
+@router.post("/cleanup")
+async def cleanup_documents():
+    cleanup_expired_documents()
+    return {"status": "cleanup_completed"}

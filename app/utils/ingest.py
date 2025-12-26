@@ -8,6 +8,19 @@ import uuid
 import os
 import re 
 import json
+import time
+from dotenv import load_dotenv
+
+load_dotenv()
+# Retention configuration
+DEFAULT_RETENTION_DAYS = 7
+
+RETENTION_DAYS = int(
+    os.getenv("RETENTION_DAYS", DEFAULT_RETENTION_DAYS)
+)
+
+RETENTION_SECONDS = RETENTION_DAYS * 24 * 60 * 60
+
 
 BASE_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")
@@ -122,34 +135,10 @@ def ingest_uploaded_pdf(file_path: str,
 
 def rebuild_faiss_from_metadata():
     """
-    Safely rebuild FAISS index from all remaining documents.
-    Called after a document deletion.
+    Safely rebuild FAISS index from remaining documents
+    after a delete operation.
+    Works with metadata.json as a LIST.
     """
-
-    if not os.path.exists(METADATA_PATH):
-        print("[INFO] No metadata.json found. Skipping FAISS rebuild.")
-        return
-
-    with open(METADATA_PATH, "r") as f:
-        metadata = json.load(f)
-        
-    if not metadata:
-        print("[INFO] Metadata empty. Clearing FAISS index.")
-        rag = RAGStore()
-        rag.vstore = None
-        return
-
-    rag = RAGStore()
-    rag.vstore = None  # force clean rebuild
-
-    total_chunks = 0
-
-    def rebuild_faiss_from_metadata():
-        """
-        Safely rebuild FAISS index from remaining documents
-        after a delete operation.
-        Works with metadata.json as a LIST.
-        """
 
     if not os.path.exists(METADATA_PATH):
         print("[INFO] No metadata.json found. Skipping FAISS rebuild.")
@@ -201,3 +190,48 @@ def rebuild_faiss_from_metadata():
         rag.add_documents(documents)
 
         print(f"[INFO] FAISS rebuilt successfully with {total_chunks} chunks.")
+
+def cleanup_expired_documents():
+    """
+    Delete documents older than retention window
+    and rebuild FAISS index.
+    Works with metadata.json as a LIST.
+    """
+    if not os.path.exists(METADATA_PATH):
+        print("[INFO] No metadata.json found. Cleanup skipped.")
+        return
+
+    with open(METADATA_PATH, "r") as f:
+        metadata = json.load(f)
+
+    if not metadata:
+        print("[INFO] Metadata empty. Nothing to clean.")
+        return
+
+    now = int(time.time())
+    retained_entries = []
+    expired_count = 0
+
+    for entry in metadata:
+        uploaded_at = entry.get("uploaded_at")
+
+        if uploaded_at and (now - uploaded_at) > RETENTION_SECONDS:
+            pdf_path = os.path.join(DOCS_DIR, entry["stored_filename"])
+            if os.path.exists(pdf_path):
+                os.remove(pdf_path)
+            expired_count += 1
+        else:
+            retained_entries.append(entry)
+
+    if expired_count == 0:
+        print("[INFO] No expired documents found.")
+        return
+
+    # Save cleaned metadata list
+    with open(METADATA_PATH, "w") as f:
+        json.dump(retained_entries, f, indent=2)
+
+    print(f"[INFO] Removed {expired_count} expired documents.")
+
+    # Rebuild FAISS index from remaining docs
+    rebuild_faiss_from_metadata()
