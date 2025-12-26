@@ -8,6 +8,7 @@ from langchain_core.output_parsers import StrOutputParser
 
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
 import os
+import re
 
 self.reranker = SentenceTransformer("all-MiniLM-L6-v2")
 
@@ -45,6 +46,20 @@ def format_docs(docs):
     """Convert list of Documents into a single context string"""
     return "\n\n".join(doc.page_content for doc in docs)
 
+def extract_full_sentences(text: str, max_chars=400):
+    """
+    Extract full sentences up to max_chars.
+    Never cuts mid-sentence.
+    """
+    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+
+    result = ""
+    for sent in sentences:
+        if len(result) + len(sent) > max_chars:
+            break
+        result += sent + " "
+
+    return result.strip()
 
 class RAGStore:
     def __init__(self, db_path: str = DEFAULT_FAISS_PATH):
@@ -187,7 +202,7 @@ class RAGStore:
                 "original_filename": doc.metadata.get("original_filename"),
                 "chunk_id": doc.metadata.get("chunk_id"),
                 "page": doc.metadata.get("page"),
-                "excerpt": doc.page_content[:300]
+                "excerpt": extract_full_sentences(doc.page_content.replace("passage:", "").strip(),max_chars=400)
             }
             for doc in docs
         ]
