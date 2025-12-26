@@ -10,27 +10,12 @@ from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
 import os
 import re
 
-self.reranker = SentenceTransformer("all-MiniLM-L6-v2")
 
 BASE_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")
 )
 
 DEFAULT_FAISS_PATH = os.path.join(BASE_DIR, "data", "faiss_index")
-
-def rerank(self, query: str, docs):
-    texts = [doc.page_content for doc in docs]
-    q_emb = self.reranker.encode(query, convert_to_tensor=True)
-    d_emb = self.reranker.encode(texts, convert_to_tensor=True)
-
-    scores = util.cos_sim(q_emb, d_emb)[0]
-    ranked = sorted(
-        zip(scores, docs),
-        key=lambda x: x[0],
-        reverse=True
-    )
-    return [doc for _, doc in ranked[:5]]
-
 
 def adaptive_k(question: str) -> int:
     length = len(question.split())
@@ -63,6 +48,7 @@ def extract_full_sentences(text: str, max_chars=400):
 
 class RAGStore:
     def __init__(self, db_path: str = DEFAULT_FAISS_PATH):
+        self.reranker = SentenceTransformer("all-MiniLM-L6-v2")
         self.db_path = db_path
 
         # Embeddings
@@ -100,6 +86,30 @@ class RAGStore:
             )
         )
 
+    def rerank(self, query: str, docs):
+        
+        if not docs:
+            return docs
+        texts = [doc.page_content for doc in docs]
+        q_emb = self.reranker.encode(query, convert_to_tensor=True,normalize_embeddings=True)
+        d_emb = self.reranker.encode(texts, convert_to_tensor=True,normalize_embeddings=True)
+
+        scores = util.cos_sim(q_emb, d_emb)[0]
+        ranked = sorted(
+            zip(scores, docs),
+            key=lambda x: x[0],
+            reverse=True
+        )
+        SIMILARITY_THRESHOLD = 0.35  # empirically good for MiniLM
+
+        filtered = [
+            doc for score, doc in ranked
+            if score >= SIMILARITY_THRESHOLD
+        ]
+
+        return filtered[:5]
+
+    
     def load_store_if_exists(self):
         """
         Load FAISS only if it exists.
@@ -155,18 +165,20 @@ class RAGStore:
             )
 
         # 2️⃣ Retrieve ONCE
-        expanded_query = (
-            f"query: {question}. "
-            "Answer from sections related to KYC, Customer Due Diligence, "
-            "Ongoing Due Diligence, or updation of records."
-        )
-        docs = retriever.invoke(expanded_query)
-        docs = self.rerank(query, docs)
+        base_query = f"query: {question}"
+
+        docs = retriever.invoke(base_query)
+        docs = self.rerank(base_query, docs)
+        
         if not docs:
-            fallback_query = (
-                "query: updation of KYC records ongoing due diligence risk category"
+            expanded_query = (
+                f"query: {question}. "
+                "Related terms: customer due diligence, identity verification, "
+                "ongoing monitoring, record updation."
             )
-            docs = retriever.invoke(fallback_query)
+
+            docs = retriever.invoke(expanded_query)
+            docs = self.rerank(expanded_query, docs)
 
 
         # 3️⃣ Combine retrieved docs into context
@@ -193,7 +205,10 @@ class RAGStore:
             answer = str(raw_answer).strip()
             
         if answer == "NOT_FOUND":
-            answer = "The provided documents do not contain this information."
+            return {
+                "answer": "The provided documents do not contain this information.",
+                "sources": []
+            }
 
         # 5️⃣ Build sources from the SAME docs
         sources = [
