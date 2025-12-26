@@ -12,3 +12,6 @@ __pycache__/
 # OS / editor junk
 .DS_Store
 .vscode/
+
+data/faiss_index/
+data/docs/*.pdf
