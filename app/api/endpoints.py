@@ -169,6 +169,10 @@ async def delete_document(doc_id: str):
 
     # 3️⃣ Rebuild FAISS safely
     rebuild_faiss_from_metadata()
+    
+    rag.vstore = None
+    rag.retriever = None
+    rag.chain = None
 
     # 4️⃣ Reload FAISS into running process
     rag.load_store_if_exists()
