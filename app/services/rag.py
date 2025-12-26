@@ -9,6 +9,7 @@ from langchain_core.output_parsers import StrOutputParser
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
 import os
 
+
 BASE_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")
 )
@@ -52,7 +53,7 @@ class RAGStore:
             template=(
                 "Answer the question using ONLY the context below.\n"
                 "If the answer is not in the context, say:\n"
-                "\"Not found in the provided documents.\"\n\n"
+                "\"NOT_FOUND\"\n\n"
                 "Context:\n{context}\n\n"
                 "Question:\n{question}\n\n"
                 "Answer:"
@@ -133,12 +134,23 @@ class RAGStore:
 
 
         # 4️⃣ Call LLM explicitly with the SAME context
-        answer = self.llm.invoke(
+        raw_answer = self.llm.invoke(
             self.prompt.format(
                 context=context,
                 question=question
             )
         )
+        
+        # 🔧 Normalize HuggingFacePipeline output
+        if isinstance(raw_answer, list):
+            answer = raw_answer[0].get("generated_text", "").strip()
+        elif isinstance(raw_answer, dict):
+            answer = raw_answer.get("generated_text", "").strip()
+        else:
+            answer = str(raw_answer).strip()
+            
+        if answer == "NOT_FOUND":
+            answer = "The provided documents do not contain this information."
 
         # 5️⃣ Build sources from the SAME docs
         sources = [
@@ -146,15 +158,17 @@ class RAGStore:
                 "doc_id": doc.metadata.get("doc_id"),
                 "original_filename": doc.metadata.get("original_filename"),
                 "chunk_id": doc.metadata.get("chunk_id"),
+                "page": doc.metadata.get("page"),
                 "excerpt": doc.page_content[:300]
             }
             for doc in docs
         ]
 
         return {
-            "answer": answer,
+            "answer": answer if answer else "The provided documents do not contain this information.",
             "sources": sources
         }
+
 
     
     def add_documents(self, documents):

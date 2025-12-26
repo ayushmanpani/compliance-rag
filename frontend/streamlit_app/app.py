@@ -50,6 +50,16 @@ selected_doc = st.selectbox(
 
 selected_doc_id = doc_options[selected_doc]
 
+if selected_doc_id:
+    if st.button("🗑 Delete selected document"):
+        with st.spinner("Deleting document and rebuilding index..."):
+            response = requests.delete(
+                f"{BACKEND_URL}/documents/{selected_doc_id}"
+            )
+            st.success("Document deleted successfully")
+            st.rerun()
+
+
 
 if st.button("Ask"):
     if question.strip():

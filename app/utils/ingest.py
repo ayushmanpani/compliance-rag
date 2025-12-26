@@ -6,8 +6,15 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from app.services.rag import RAGStore
 import uuid
 import os
-import re
+import re 
+import json
 
+BASE_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..")
+)
+
+DOCS_DIR = os.path.join(BASE_DIR, "data", "docs")
+METADATA_PATH = os.path.join(DOCS_DIR, "metadata.json")
 
 def is_index_like(text: str) -> bool:
     # High ratio of numbers / codes = index or table
@@ -112,3 +119,52 @@ def ingest_uploaded_pdf(file_path: str,
     print("[INFO] PDF ingested successfully.")
 
     return doc_id
+
+def rebuild_faiss_from_metadata():
+    """
+    Safely rebuild FAISS index from all remaining documents.
+    Called after a document deletion.
+    """
+
+    if not os.path.exists(METADATA_PATH):
+        print("[INFO] No metadata.json found. Skipping FAISS rebuild.")
+        return
+
+    with open(METADATA_PATH, "r") as f:
+        metadata = json.load(f)
+
+    rag = RAGStore()
+    rag.vstore = None  # force clean rebuild
+
+    total_chunks = 0
+
+    for doc_id, info in metadata.items():
+        pdf_path = os.path.join(DOCS_DIR, info["stored_filename"])
+        original_filename = info["original_filename"]
+
+        if not os.path.exists(pdf_path):
+            continue
+
+        print(f"[INFO] Re-ingesting: {original_filename}")
+
+        base_metadata = {
+            "doc_id": doc_id,
+            "original_filename": original_filename
+        }
+
+        pages = extract_text_from_pdf(pdf_path)
+
+        documents = []
+        for page_num, page_text in pages:
+            documents.extend(
+                create_chunks(
+                    text=page_text,
+                    base_metadata=base_metadata,
+                    page_num=page_num
+                )
+            )
+
+        total_chunks += len(documents)
+        rag.add_documents(documents)
+
+    print(f"[INFO] FAISS rebuilt successfully with {total_chunks} chunks.")

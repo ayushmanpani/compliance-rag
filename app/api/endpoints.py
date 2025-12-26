@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Optional
 
 from app.services.rag import RAGStore
-from app.utils.ingest import ingest_uploaded_pdf
+from app.utils.ingest import ingest_uploaded_pdf, rebuild_faiss_from_metadata
 
 # =======================
 # Absolute paths (CRITICAL)
@@ -142,3 +142,38 @@ async def list_documents():
         }
         for entry in metadata
     ]
+
+@router.delete("/documents/{doc_id}")
+async def delete_document(doc_id: str):
+    metadata = load_metadata()
+
+    if not metadata:
+        raise HTTPException(status_code=404, detail="No documents found")
+
+    # Find matching document
+    entry = next((item for item in metadata if item["doc_id"] == doc_id), None)
+
+    if not entry:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    # 1️⃣ Delete PDF file
+    pdf_path = os.path.join(DOCS_DIR, entry["stored_filename"])
+    if os.path.exists(pdf_path):
+        os.remove(pdf_path)
+
+    # 2️⃣ Remove entry from metadata list
+    metadata = [item for item in metadata if item["doc_id"] != doc_id]
+
+    with open(METADATA_PATH, "w") as f:
+        json.dump(metadata, f, indent=2)
+
+    # 3️⃣ Rebuild FAISS safely
+    rebuild_faiss_from_metadata()
+
+    # 4️⃣ Reload FAISS into running process
+    rag.load_store_if_exists()
+
+    return {
+        "status": "deleted",
+        "doc_id": doc_id
+    }
