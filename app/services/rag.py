@@ -1,7 +1,7 @@
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_community.llms import HuggingFacePipeline
-
+from sentence_transformers import SentenceTransformer, util
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnablePassthrough, RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
@@ -9,12 +9,37 @@ from langchain_core.output_parsers import StrOutputParser
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
 import os
 
+self.reranker = SentenceTransformer("all-MiniLM-L6-v2")
 
 BASE_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")
 )
 
 DEFAULT_FAISS_PATH = os.path.join(BASE_DIR, "data", "faiss_index")
+
+def rerank(self, query: str, docs):
+    texts = [doc.page_content for doc in docs]
+    q_emb = self.reranker.encode(query, convert_to_tensor=True)
+    d_emb = self.reranker.encode(texts, convert_to_tensor=True)
+
+    scores = util.cos_sim(q_emb, d_emb)[0]
+    ranked = sorted(
+        zip(scores, docs),
+        key=lambda x: x[0],
+        reverse=True
+    )
+    return [doc for _, doc in ranked[:5]]
+
+
+def adaptive_k(question: str) -> int:
+    length = len(question.split())
+    if length <= 6:
+        return 3
+    elif length <= 15:
+        return 5
+    else:
+        return 8
+
 
 def format_docs(docs):
     """Convert list of Documents into a single context string"""
@@ -102,14 +127,16 @@ class RAGStore:
             print("[DEBUG] Sample stored metadata:", first_doc.metadata)
 
     
-    # 1️⃣ Choose retriever behavior
+        # 1️⃣ Choose retriever behavior
+        k = adaptive_k(question)
+
         if doc_id:
             retriever = self.vstore.as_retriever(
-                search_kwargs={"k": 3, "filter": {"doc_id": doc_id}}
+                search_kwargs={"k": k, "filter": {"doc_id": doc_id}}
             )
         else:
             retriever = self.vstore.as_retriever(
-                search_kwargs={"k": 3}
+                search_kwargs={"k": k}
             )
 
         # 2️⃣ Retrieve ONCE
@@ -119,6 +146,7 @@ class RAGStore:
             "Ongoing Due Diligence, or updation of records."
         )
         docs = retriever.invoke(expanded_query)
+        docs = self.rerank(query, docs)
         if not docs:
             fallback_query = (
                 "query: updation of KYC records ongoing due diligence risk category"
