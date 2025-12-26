@@ -37,3 +37,26 @@ def list_documents():
     response = requests.get(f"{BACKEND_URL}/documents")
     return response.json()
 
+def delete_document(doc_id: str):
+    response = requests.delete(
+        f"{BACKEND_URL}/documents/{doc_id}"
+    )
+    return response.json()
+
+def reset_knowledge_base():
+    response = requests.post(f"{BACKEND_URL}/reset")
+    return _safe_json(response)
+
+# ---------- helper ----------
+
+def _safe_json(response):
+    """
+    Never crash frontend on bad / empty responses.
+    """
+    try:
+        return response.json()
+    except ValueError:
+        return {
+            "status_code": response.status_code,
+            "raw_response": response.text
+        }

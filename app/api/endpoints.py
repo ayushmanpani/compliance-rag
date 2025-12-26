@@ -24,6 +24,8 @@ DATA_DIR = os.path.join(BASE_DIR, "data")
 DOCS_DIR = os.path.join(DATA_DIR, "docs")
 METADATA_PATH = os.path.join(DOCS_DIR, "metadata.json")
 
+DEFAULT_FAISS_PATH = os.path.join(DATA_DIR, "faiss_index")
+
 os.makedirs(DOCS_DIR, exist_ok=True)
 
 # =======================
@@ -181,3 +183,39 @@ async def delete_document(doc_id: str):
         "status": "deleted",
         "doc_id": doc_id
     }
+
+
+@router.post("/reset")
+async def reset_knowledge_base():
+    """
+    Completely reset the knowledge base:
+    - Delete FAISS index (disk)
+    - Delete all PDFs
+    - Delete metadata.json
+    - Clear in-memory FAISS
+    """
+
+    # 1️⃣ Delete FAISS index (disk)
+    if os.path.exists(DEFAULT_FAISS_PATH):
+        shutil.rmtree(DEFAULT_FAISS_PATH)
+
+    # 2️⃣ Delete all PDFs (keep docs folder)
+    if os.path.exists(DOCS_DIR):
+        for f in os.listdir(DOCS_DIR):
+            if f.lower().endswith(".pdf"):
+                os.remove(os.path.join(DOCS_DIR, f))
+
+    # 3️⃣ Delete metadata.json
+    if os.path.exists(METADATA_PATH):
+        os.remove(METADATA_PATH)
+
+    # 4️⃣ 🔥 Clear in-memory FAISS (CRITICAL)
+    rag.vstore = None
+    rag.retriever = None
+    rag.chain = None
+
+    return {
+        "status": "reset",
+        "message": "Knowledge base cleared successfully"
+    }
+

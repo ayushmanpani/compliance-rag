@@ -132,16 +132,49 @@ def rebuild_faiss_from_metadata():
 
     with open(METADATA_PATH, "r") as f:
         metadata = json.load(f)
+        
+    if not metadata:
+        print("[INFO] Metadata empty. Clearing FAISS index.")
+        rag = RAGStore()
+        rag.vstore = None
+        return
 
     rag = RAGStore()
     rag.vstore = None  # force clean rebuild
 
     total_chunks = 0
 
-    for doc_id, info in metadata.items():
-        pdf_path = os.path.join(DOCS_DIR, info["stored_filename"])
-        original_filename = info["original_filename"]
+    def rebuild_faiss_from_metadata():
+        """
+        Safely rebuild FAISS index from remaining documents
+        after a delete operation.
+        Works with metadata.json as a LIST.
+        """
 
+    if not os.path.exists(METADATA_PATH):
+        print("[INFO] No metadata.json found. Skipping FAISS rebuild.")
+        return
+
+    with open(METADATA_PATH, "r") as f:
+        metadata = json.load(f)
+
+    if not metadata:
+        print("[INFO] Metadata empty. Clearing FAISS index.")
+        rag = RAGStore()
+        rag.vstore = None
+        return
+
+    rag = RAGStore()
+    rag.vstore = None  # force fresh rebuild
+
+    total_chunks = 0
+
+    for entry in metadata:
+        doc_id = entry["doc_id"]
+        original_filename = entry["original_filename"]
+        stored_filename = entry["stored_filename"]
+
+        pdf_path = os.path.join(DOCS_DIR, stored_filename)
         if not os.path.exists(pdf_path):
             continue
 
@@ -167,4 +200,4 @@ def rebuild_faiss_from_metadata():
         total_chunks += len(documents)
         rag.add_documents(documents)
 
-    print(f"[INFO] FAISS rebuilt successfully with {total_chunks} chunks.")
+        print(f"[INFO] FAISS rebuilt successfully with {total_chunks} chunks.")
