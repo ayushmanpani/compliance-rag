@@ -129,9 +129,13 @@ Typical pipeline:
 
 ## 🌐 Live Demo
 
-🚧 **Live demo link will be added here after deployment**
+🚧 Deployment attempted on VM-based platforms (Railway) for persistent FAISS + transformer inference.
 
-> The application can also be run locally or demonstrated on request.
+Due to free-tier image size limits for ML dependencies (PyTorch, Transformers), the live demo may be temporarily unavailable.
+
+▶️ **The system can be run locally or demonstrated on request.**  
+▶️ Architecture, code, and evaluation are fully production-aligned.
+
 
 ---
 
