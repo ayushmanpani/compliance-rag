@@ -7,3 +7,4 @@ groq
 sentence-transformers
 pydantic
 pdfplumber
+python-dotenv
