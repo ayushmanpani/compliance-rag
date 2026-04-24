@@ -129,9 +129,7 @@ Typical pipeline:
 
 ## 🌐 Live Demo
 
-🚧 Deployment attempted on VM-based platforms (Railway) for persistent FAISS + transformer inference.
-
-Due to free-tier image size limits for ML dependencies (PyTorch, Transformers), the live demo may be temporarily unavailable.
+Deployment Link - https://compliance-rag.onrender.com
 
 ▶️ **The system can be run locally or demonstrated on request.**  
 ▶️ Architecture, code, and evaluation are fully production-aligned.
