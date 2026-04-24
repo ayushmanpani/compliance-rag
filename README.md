@@ -129,7 +129,7 @@ Typical pipeline:
 
 ## 🌐 Live Demo
 
-Deployment Link - https://compliance-rag.onrender.com
+Deployment Link - https://compliance-rag.onrender.com/docs
 
 ▶️ **The system can be run locally or demonstrated on request.**  
 ▶️ Architecture, code, and evaluation are fully production-aligned.
